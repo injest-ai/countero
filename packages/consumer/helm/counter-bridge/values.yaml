@@ -1,0 +1,48 @@
+image:
+  repository: counter-bridge
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+config:
+  redis:
+    url: redis://redis:6379
+  mongodb:
+    uri: mongodb://mongodb:27017/counter-bridge
+    collectionName: counters
+  stream:
+    key: counter-bridge:events
+    consumerGroup: counter-bridge-group
+  batching:
+    maxWaitMs: 500
+    maxMessages: 1000
+  logging:
+    level: info
+  health:
+    enabled: true
+    port: 9090
+
+# Use an existing secret for sensitive values (redis URL, mongodb URI)
+# Secret keys: COUNTER_BRIDGE_REDIS_URL, COUNTER_BRIDGE_MONGODB_URI
+existingSecret: ""
+
+serviceAccount:
+  create: false
+  name: ""
+
+podAnnotations: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

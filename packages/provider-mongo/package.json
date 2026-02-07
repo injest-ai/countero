@@ -1,0 +1,26 @@
+{
+  "name": "@counter-bridge/provider-mongo",
+  "version": "0.1.0",
+  "description": "MongoDB/Mongoose persistence provider for CounterBridge",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "vitest run"
+  },
+  "keywords": ["counter", "mongodb", "mongoose", "sync", "provider"],
+  "license": "MIT",
+  "dependencies": {
+    "@counter-bridge/types": "0.1.0",
+    "@counter-bridge/sdk": "0.1.0"
+  },
+  "peerDependencies": {
+    "mongoose": "^7.0.0 || ^8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "mongoose": "^8.0.0",
+    "typescript": "^5.3.0"
+  }
+}

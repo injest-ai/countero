@@ -1,0 +1,17 @@
+{{- if .Values.config.health.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "counter-bridge.fullname" . }}
+  labels:
+    {{- include "counter-bridge.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.config.health.port }}
+      targetPort: {{ .Values.config.health.port }}
+      protocol: TCP
+      name: health
+  selector:
+    {{- include "counter-bridge.selectorLabels" . | nindent 4 }}
+{{- end }}

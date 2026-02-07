@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "declaration": true,
+    "composite": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "references": [
+    { "path": "packages/types" },
+    { "path": "packages/core" },
+    { "path": "packages/provider-mongo" },
+    { "path": "packages/sdk" },
+    { "path": "packages/consumer" }
+  ],
+  "exclude": ["node_modules", "dist"]
+}

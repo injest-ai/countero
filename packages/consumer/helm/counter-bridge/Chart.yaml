@@ -1,0 +1,6 @@
+apiVersion: v2
+name: counter-bridge
+description: CounterBridge consumer service - distributed counter sync
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

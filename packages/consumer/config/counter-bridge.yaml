@@ -1,0 +1,24 @@
+# CounterBridge Consumer Configuration
+
+redis:
+  url: redis://localhost:6379
+
+mongodb:
+  uri: mongodb://localhost:27017/counter-bridge
+  collectionName: counters
+
+stream:
+  key: counter-bridge:events
+  consumerGroup: counter-bridge-group
+  # consumerId: auto-generated from pod name or PID
+
+batching:
+  maxWaitMs: 500
+  maxMessages: 1000
+
+logging:
+  level: info
+
+health:
+  enabled: true
+  port: 9090
