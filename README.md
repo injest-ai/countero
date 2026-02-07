@@ -3,7 +3,7 @@
 High-throughput counter synchronization service. Aggregates increment/decrement events from a Redis Stream, folds them in-memory, and flushes batched deltas to any persistence backend.
 
 ```
-App → CounterClient.inc() → Redis Stream → CounterBridge → Aggregator → Provider → MongoDB
+App → post.inc('likes') → Redis Stream → Consumer Service → Aggregator → MongoDB
 ```
 
 100k individual `+1` events become a single `$inc: { value: 100000 }` write.
@@ -19,72 +19,32 @@ Naive counter updates (`UPDATE posts SET likes = likes + 1`) under high concurre
 
 ## Quick Start
 
+### 1. Install the plugin in your app
+
 ```bash
-npm install @counter-bridge/sdk @counter-bridge/core @counter-bridge/provider-mongo
+npm install @counter-bridge/provider-mongo
 ```
 
-### Producer (your app)
-
 ```typescript
-import { CounterClient } from '@counter-bridge/sdk';
+import mongoose from 'mongoose';
+import { counterPlugin, counterBridge, MongoProvider } from '@counter-bridge/provider-mongo';
 
-const counter = new CounterClient({ redis: 'redis://localhost:6379' });
-
-await counter.inc('v1:post:123:likes');
-await counter.dec('v1:post:123:likes');
-await counter.add('v1:post:123:views', 50);
-```
-
-### Consumer (background worker)
-
-```typescript
-import { CounterBridge } from '@counter-bridge/core';
-import { MongoProvider } from '@counter-bridge/provider-mongo';
-
-const bridge = new CounterBridge({
-  redis: 'redis://localhost:6379',
-  provider: new MongoProvider({ connection: mongoose.connection }),
-});
-
-bridge.on('flush', ({ scopeCount }) => console.log(`Flushed ${scopeCount} scopes`));
-bridge.on('error', (err) => console.error(err));
-
-await bridge.start();
-```
-
-### Reading counters
-
-```typescript
-// Direct read
-const likes = await bridge.get('v1:post:123:likes');
-
-// Batch read
-const counters = await bridge.getBatch([
-  'v1:post:123:likes',
-  'v1:post:123:views',
-]);
-```
-
-### Mongoose plugin
-
-```typescript
-import { counterPlugin, counterBridge } from '@counter-bridge/provider-mongo';
-
-// Initialize the write client (once at app startup)
+// Initialize the write client once at app startup
 counterBridge.setup({ redisUrl: 'redis://localhost:6379' });
 
+// Add counters to any Mongoose schema
 PostSchema.plugin(counterPlugin, {
   fields: ['likes', 'views', 'shares'],
   provider: new MongoProvider(),
 });
 
-// Write methods (push events to Redis Stream)
+// Write — fire-and-forget into Redis Stream
 const post = await Post.findById(id);
 await post.inc('likes');
 await post.dec('likes');
 await post.add('views', 50);
 
-// Read methods (read from MongoDB)
+// Read — directly from MongoDB
 const likes = await post.getCounter('likes');
 const all = await post.getCounters(); // { likes: 42, views: 1337, shares: 7 }
 
@@ -97,20 +57,36 @@ const withCounters = await Post.withCounters(posts);
 await counterBridge.shutdown();
 ```
 
+### 2. Deploy the consumer service
+
+The consumer reads from the Redis Stream, aggregates deltas, and flushes to MongoDB. Deploy it as a standalone service:
+
+```bash
+# Docker
+docker run ghcr.io/injest-ai/counter-bridge:latest \
+  -e COUNTER_BRIDGE_REDIS_URL=redis://redis:6379 \
+  -e COUNTER_BRIDGE_MONGODB_URI=mongodb://mongo:27017/myapp
+
+# Or Helm
+helm install counter-bridge packages/consumer/helm/counter-bridge \
+  --set config.redis.url=redis://redis:6379 \
+  --set config.mongodb.uri=mongodb://mongo:27017/myapp
+```
+
+See [Deployment](#deployment) for full configuration options.
+
 ## Architecture
 
 See [docs/architecture.md](docs/architecture.md) for full Mermaid diagrams.
 
 ```
-┌─────────────────────┐     ┌─────────────────────┐
-│   @counter-bridge/   │     │   @counter-bridge/   │
-│        sdk           │     │   provider-mongo     │
-│  CounterClient       │     │   counterPlugin      │
-│  (standalone)        │     │   inc/dec/add via    │
-│                      │     │   global setup()     │
-└──────────┬──────────┘     └──────────┬──────────┘
-           │ XADD MAXLEN ~100k         │
-           ├───────────────────────────┘
+┌─────────────────────┐
+│     Your App         │
+│                      │
+│  post.inc('likes')   │   Mongoose plugin writes to Redis Stream
+│  post.getCounter()   │   Reads directly from MongoDB
+└──────────┬──────────┘
+           │ XADD (via counterBridge.setup())
            ▼
 ┌─────────────────────┐
 │   Redis Stream       │   counter-bridge:events
@@ -119,8 +95,7 @@ See [docs/architecture.md](docs/architecture.md) for full Mermaid diagrams.
            │ XREADGROUP BLOCK
            ▼
 ┌─────────────────────┐
-│   @counter-bridge/   │
-│       core           │   CounterBridge — consumer + aggregator
+│   Consumer Service   │   Standalone Docker/Helm deployment
 │                      │
 │  ┌───────────────┐   │   Aggregator folds deltas in-memory:
 │  │  Aggregator   │   │   Map<scope, netDelta>
@@ -135,13 +110,8 @@ See [docs/architecture.md](docs/architecture.md) for full Mermaid diagrams.
            │ provider.flush(batch)
            ▼
 ┌─────────────────────┐
-│  ICounterProvider    │   Pluggable interface: flush() + get()
-│  ┌───────────────┐   │
-│  │ MongoProvider  │   │   bulkWrite with $inc, handles partial failures
-│  └───────────────┘   │
-│  ┌───────────────┐   │
-│  │ YourProvider   │   │   Implement flush() and get() for any backend
-│  └───────────────┘   │
+│  MongoDB             │   bulkWrite with $inc per scope
+│  counters collection │   Handles partial failures
 └─────────────────────┘
 ```
 
@@ -174,25 +144,21 @@ Providers can return `{ failed: Map<scope, delta> }` from `flush()` for partial 
 
 ## Configuration
 
-### CounterClient (SDK)
+### Plugin Setup
 
 | Option | Default | Description |
 |---|---|---|
-| `redis` | *required* | Redis URL or ioredis instance |
+| `redisUrl` | *required* | Redis connection URL |
 | `streamKey` | `counter-bridge:events` | Redis Stream key |
 | `maxStreamLength` | `100000` | Approximate MAXLEN trim (0 to disable) |
 
-### CounterBridge (Core)
+### Counter Plugin
 
 | Option | Default | Description |
 |---|---|---|
-| `redis` | *required* | Redis URL or ioredis instance |
-| `provider` | *required* | `ICounterProvider` implementation |
-| `streamKey` | `counter-bridge:events` | Redis Stream key |
-| `consumerGroup` | `counter-bridge-group` | Consumer group name |
-| `consumerId` | auto-generated | Unique consumer ID |
-| `batching.maxWaitMs` | `500` | Flush timer interval (ms) |
-| `batching.maxMessages` | `1000` | Batch size threshold |
+| `fields` | *required* | Counter field names (e.g., `['likes', 'views']`) |
+| `scopePrefix` | model name | Scope prefix (e.g., `'v1:post'`) |
+| `provider` | new MongoProvider() | `ICounterProvider` instance for reads |
 
 ### MongoProvider
 
@@ -200,19 +166,6 @@ Providers can return `{ failed: Map<scope, delta> }` from `flush()` for partial 
 |---|---|---|
 | `connection` | default mongoose | Mongoose connection |
 | `collectionName` | `counters` | MongoDB collection name |
-
-## Events
-
-`CounterBridge` extends `EventEmitter`:
-
-```typescript
-bridge.on('started', () => {});
-bridge.on('stopped', () => {});
-bridge.on('flush', ({ scopeCount, flushNumber }) => {});
-bridge.on('recovery', ({ messageCount }) => {});  // PEL recovery on startup
-bridge.on('error', (err) => {});
-bridge.on('warn', ({ message, ...details }) => {}); // malformed events, partial failures
-```
 
 ## Packages
 
